@@ -5,7 +5,6 @@ This example shows how to build a minimal digital twin for a PLC.
 ## Setup
 
 * Before starting, you need to start the docker-compose based local Ditto deployment (with all default settings).
-* Checkout the `ditto-client` repo and build it local with `mvn clean install` (as there is no release yet)
 * To build the project simply run `mvn clean install`.
 * Then you are good to go and can execute `Example`.
 
