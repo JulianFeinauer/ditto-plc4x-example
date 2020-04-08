@@ -24,11 +24,15 @@ import org.eclipse.ditto.model.things.Features;
 import org.eclipse.ditto.model.things.Thing;
 import org.eclipse.ditto.model.things.ThingId;
 import org.eclipse.ditto.signals.commands.things.exceptions.ThingNotAccessibleException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.Random;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /**
@@ -37,20 +41,22 @@ import java.util.function.Consumer;
  */
 public class Example {
 
+    private static final Logger logger = LoggerFactory.getLogger(Example.class);
+
     private static final String DITTO_API_ENDPOINT = "ws://localhost:8080/ws/2";
     private static final String DITTO_USER = "ditto";
     private static final String DITTO_PASSWORD = "ditto";
     private static final String THING_NAME = "org.pragmaticindustries:my-plc";
 
-//    // Mocked
-//    private static final String PLC4X_FIELD_NAME = "pressure";
-//    private static final String PLC4X_PLC_ADDRESS = "mock:plc";
-//    private static final String PLC4X_FIELD_ADDRESS = "%DB:xxx";
-
-    // Real Siemens Device
+    // Mocked
     private static final String PLC4X_FIELD_NAME = "pressure";
-    private static final String PLC4X_PLC_ADDRESS = "s7://192.168.167.210/1/1";
-    private static final String PLC4X_FIELD_ADDRESS = "%DB555.DBD0:DINT";
+    private static final String PLC4X_PLC_ADDRESS = "mock:plc";
+    private static final String PLC4X_FIELD_ADDRESS = "%DB:xxx";
+
+//    // Real Siemens Device
+//    private static final String PLC4X_FIELD_NAME = "pressure";
+//    private static final String PLC4X_PLC_ADDRESS = "s7://192.168.167.210/1/1";
+//    private static final String PLC4X_FIELD_ADDRESS = "%DB555.DBD0:DINT";
 
     public static void main(String[] args) throws ExecutionException, InterruptedException, PlcConnectionException {
         MessagingConfiguration configuration = WebSocketMessagingConfiguration.newBuilder()
@@ -71,17 +77,23 @@ public class Example {
         } catch (ExecutionException e) {
             if (e.getCause() instanceof ThingNotAccessibleException) {
                 // Not existing, create
-                client.twin().create(Thing.newBuilder().setId(ThingId.of(THING_NAME)).setFeature("live-data").build()).get();
+                logger.info("Digital Twin not found, creating new...");
+                Thing thing = Thing.newBuilder()
+                    .setId(ThingId.of(THING_NAME))
+                    .setFeature("live-data")
+                    .build();
+                client.twin().create(thing).get();
             }
         }
 
         // Check if the feature exists
-        boolean present = client.twin().forId(ThingId.of(THING_NAME)).retrieve().get().getFeatures().map(features -> features.getFeature("live-data")).isPresent();
+        boolean present = client.twin().forId(ThingId.of(THING_NAME)).retrieve().get()
+            .getFeatures().map(features -> features.getFeature("live-data")).isPresent();
         if (!present) {
-            System.out.println("feature not present, adding feature...");
+            logger.info("feature not present, adding feature...");
             client.twin().forId(ThingId.of(THING_NAME)).setFeatures(Features.newBuilder().set(Feature.newBuilder().withId("live-data").build()).build());
         }
-        // Fetch again
+        // Put Attribute in again
         client.twin().forId(ThingId.of(THING_NAME)).putAttribute("plc-address", PLC4X_PLC_ADDRESS).get();
 
         // Prepare the Mock
@@ -94,8 +106,10 @@ public class Example {
         try (PlcConnection connection = plcDriverManager.getConnection(PLC4X_PLC_ADDRESS)) {
             for (int i = 1; i <= 100_000; i++) {
                 int value = connection.readRequestBuilder().addItem("item1", PLC4X_FIELD_ADDRESS).build().execute().get().getInteger("item1");
+                logger.debug("Got value {} from PLC, sending", value);
                 client.twin().forId(ThingId.of(THING_NAME)).forFeature("live-data").putProperty(PLC4X_FIELD_NAME, value).get();
-                System.out.println(client.twin().forId(ThingId.of(THING_NAME)).retrieve().get());
+                logger.debug("Update in Ditto was successful");
+                logger.info("Current snapshot of twin: {}", client.twin().forId(ThingId.of(THING_NAME)).retrieve().get());
                 Thread.sleep(100);
             }
         } catch (Exception e) {
